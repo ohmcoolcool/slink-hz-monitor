@@ -13,6 +13,7 @@ to limit the display to selected stations.
 from __future__ import annotations
 
 import argparse
+import csv
 import json
 import os
 import re
@@ -107,6 +108,11 @@ def parse_args() -> argparse.Namespace:
         "--state",
         default=str(default_state_path()),
         help="JSON file used to keep 15-minute history.",
+    )
+    parser.add_argument(
+        "--log-file",
+        default="",
+        help="Optional CSV file to append poll results continuously.",
     )
     parser.add_argument(
         "--once",
@@ -283,6 +289,15 @@ def status_for_age(age_minutes: Optional[float], ok_minutes: float, warn_minutes
     return "red"
 
 
+def station_age_minutes(
+    latest: Dict[str, datetime], station: str, current: datetime
+) -> Optional[float]:
+    last_dt = latest.get(station)
+    if last_dt is None:
+        return None
+    return (current - last_dt.astimezone(current.tzinfo)).total_seconds() / 60.0
+
+
 def update_current_slot(
     state: Dict[str, Dict[str, str]],
     stations: List[str],
@@ -294,13 +309,80 @@ def update_current_slot(
 ) -> None:
     current_slot = slot_key(floor_slot(current, slot_minutes))
     for station in stations:
-        last_dt = latest.get(station)
-        age = None
-        if last_dt is not None:
-            age = (current - last_dt.astimezone(current.tzinfo)).total_seconds() / 60.0
+        age = station_age_minutes(latest, station, current)
         new_status = status_for_age(age, ok_minutes, warn_minutes)
         station_state = state.setdefault(station, {})
         station_state[current_slot] = merge_status(station_state.get(current_slot), new_status)
+
+
+def append_poll_log(
+    log_file: str,
+    stations: List[str],
+    latest: Dict[str, datetime],
+    current: datetime,
+    args: argparse.Namespace,
+    error: str = "",
+) -> None:
+    if not log_file:
+        return
+
+    path = Path(log_file).expanduser()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    write_header = not path.exists() or path.stat().st_size == 0
+    slot_start = floor_slot(current, args.slot_minutes).isoformat()
+    fieldnames = [
+        "poll_time",
+        "slot_start",
+        "server",
+        "network",
+        "channel",
+        "station",
+        "status",
+        "latest_packet_time",
+        "age_minutes",
+        "error",
+    ]
+
+    with path.open("a", encoding="utf-8", newline="") as handle:
+        writer = csv.DictWriter(handle, fieldnames=fieldnames)
+        if write_header:
+            writer.writeheader()
+
+        if error:
+            writer.writerow(
+                {
+                    "poll_time": current.isoformat(),
+                    "slot_start": slot_start,
+                    "server": args.server,
+                    "network": args.network,
+                    "channel": args.channel,
+                    "station": "",
+                    "status": "error",
+                    "latest_packet_time": "",
+                    "age_minutes": "",
+                    "error": error,
+                }
+            )
+            return
+
+        for station in stations:
+            latest_dt = latest.get(station)
+            age = station_age_minutes(latest, station, current)
+            status = status_for_age(age, args.ok_lag_minutes, args.warn_lag_minutes)
+            writer.writerow(
+                {
+                    "poll_time": current.isoformat(),
+                    "slot_start": slot_start,
+                    "server": args.server,
+                    "network": args.network,
+                    "channel": args.channel,
+                    "station": station,
+                    "status": status,
+                    "latest_packet_time": latest_dt.isoformat() if latest_dt else "",
+                    "age_minutes": f"{age:.2f}" if age is not None else "",
+                    "error": "",
+                }
+            )
 
 
 def trim_state(
@@ -434,10 +516,12 @@ def main() -> int:
             )
             trim_state(state, current, args.slot_minutes, args.slots)
             save_state(state_path, state)
+            append_poll_log(args.log_file, stations, latest, current, args)
             last_error = ""
         except Exception as exc:
             last_error = str(exc)
             stations = station_display_list(station_filter, state, {})
+            append_poll_log(args.log_file, stations, {}, current, args, last_error)
 
         render(state, stations, current, args, last_error)
 

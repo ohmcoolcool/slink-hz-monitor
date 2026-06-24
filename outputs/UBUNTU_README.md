@@ -71,6 +71,36 @@ Useful options:
 --warn-lag-minutes 30  # yellow threshold
 --time-zone utc        # use utc or local for timestamps without timezone
 --ascii                # use OK/!!/XX instead of colored dots
+--log-file results.csv # append poll results to a CSV file
+```
+
+## 4. Save results continuously
+
+To keep appending every poll result to a CSV file:
+
+```bash
+./slink_hz_monitor.py --server 192.168.2.200 --poll-seconds 900 --log-file slink_hz_results.csv
+```
+
+This writes one row per station per poll. The file keeps growing until you stop
+the monitor with `Ctrl-c`.
+
+CSV columns:
+
+```text
+poll_time,slot_start,server,network,channel,station,status,latest_packet_time,age_minutes,error
+```
+
+To watch the file while the monitor is running, open another terminal:
+
+```bash
+tail -f slink_hz_results.csv
+```
+
+Using the launcher:
+
+```bash
+SLINK_LOG_FILE=slink_hz_results.csv ./run_slink_monitor_ubuntu.sh --poll-seconds 900
 ```
 
 By default, history is stored in:
@@ -79,7 +109,7 @@ By default, history is stored in:
 ~/.local/state/slink_hz_monitor/state.json
 ```
 
-## 4. Run inside tmux
+## 5. Run inside tmux
 
 ```bash
 tmux new -s slinkmon './slink_hz_monitor.py --server 192.168.2.200'
@@ -91,7 +121,7 @@ Detach with `Ctrl-b`, then `d`. Reconnect with:
 tmux attach -t slinkmon
 ```
 
-## 5. Optional systemd user service
+## 6. Optional systemd user service
 
 Use this if you want the monitor to restart automatically and write output to
 the user journal.
@@ -110,7 +140,7 @@ Description=SeedLink TM HZ station monitor
 [Service]
 Type=simple
 WorkingDirectory=%h/slink-monitor
-ExecStart=/usr/bin/python3 %h/slink-monitor/slink_hz_monitor.py --server 192.168.2.200 --poll-seconds 60 --slots 8 --ascii
+ExecStart=/usr/bin/python3 %h/slink-monitor/slink_hz_monitor.py --server 192.168.2.200 --poll-seconds 900 --slots 8 --ascii --log-file %h/slink-monitor/slink_hz_results.csv
 Restart=always
 RestartSec=10
 
