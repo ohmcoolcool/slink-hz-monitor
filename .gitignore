@@ -2,4 +2,8 @@ __pycache__/
 *.py[cod]
 *.csv
 *.state.json
+*.db
+*.sqlite
+*.sqlite3
+webapp/data/
 work/

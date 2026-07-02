@@ -1,0 +1,99 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>SeedLink TM/HZ Monitor</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <header class="topbar">
+      <div class="brand">
+        <div class="brand-mark" aria-hidden="true"></div>
+        <div>
+          <h1>SeedLink TM/HZ Monitor</h1>
+          <p id="serverLine">Waiting for first poll...</p>
+        </div>
+      </div>
+      <div class="top-actions">
+        <button id="pollNowButton" class="icon-button" title="Poll now" aria-label="Poll now">&#8635;</button>
+        <a id="exportLink" class="text-button" href="/api/export.csv?hours=24" title="Download CSV">CSV</a>
+      </div>
+    </header>
+
+    <main class="layout">
+      <section class="summary-grid" aria-label="Status summary">
+        <article class="summary-card green">
+          <span class="summary-label">Green</span>
+          <strong id="greenCount">0</strong>
+        </article>
+        <article class="summary-card yellow">
+          <span class="summary-label">Yellow</span>
+          <strong id="yellowCount">0</strong>
+        </article>
+        <article class="summary-card red">
+          <span class="summary-label">Red</span>
+          <strong id="redCount">0</strong>
+        </article>
+        <article class="summary-card neutral">
+          <span class="summary-label">Total</span>
+          <strong id="totalCount">0</strong>
+        </article>
+      </section>
+
+      <section id="systemAlert" class="system-alert hidden" role="status"></section>
+
+      <section class="workbench">
+        <div class="panel-header">
+          <div>
+            <h2>15-minute slots</h2>
+            <p id="lastUpdated">No data yet</p>
+          </div>
+          <div class="controls">
+            <label class="search-box">
+              <span>&#8981;</span>
+              <input id="stationSearch" type="search" placeholder="Search station" autocomplete="off" />
+            </label>
+            <select id="hoursSelect" title="History window">
+              <option value="4">4h</option>
+              <option value="8" selected>8h</option>
+              <option value="24">24h</option>
+              <option value="48">48h</option>
+            </select>
+            <div class="segmented" role="tablist" aria-label="Status filter">
+              <button class="segment active" data-status="all">All</button>
+              <button class="segment" data-status="green">Green</button>
+              <button class="segment" data-status="yellow">Yellow</button>
+              <button class="segment" data-status="red">Red</button>
+            </div>
+          </div>
+        </div>
+
+        <div class="table-shell">
+          <table id="slotTable">
+            <thead></thead>
+            <tbody></tbody>
+          </table>
+          <div id="emptyState" class="empty-state hidden">
+            <strong>No station data yet</strong>
+            <span>Waiting for a successful poll from slinktool.</span>
+          </div>
+        </div>
+      </section>
+
+      <section class="station-panel">
+        <div class="panel-header compact">
+          <div>
+            <h2 id="detailTitle">Station detail</h2>
+            <p id="detailSubtitle">Select a station to inspect poll-level history.</p>
+          </div>
+        </div>
+        <div id="detailBody" class="detail-body">
+          <div class="detail-placeholder">No station selected</div>
+        </div>
+      </section>
+    </main>
+
+    <script src="/app.js"></script>
+  </body>
+</html>
