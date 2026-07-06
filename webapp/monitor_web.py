@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import io
 import json
 import mimetypes
 import os
@@ -419,6 +420,25 @@ class MonitorStore:
             ).fetchall()
         return [dict(row) for row in rows]
 
+    def export_summary_rows(self) -> List[dict]:
+        with self.lock, self.connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT station, last_seen, last_status, latest_packet_time, age_minutes
+                FROM stations
+                ORDER BY
+                    CASE last_status
+                        WHEN 'red' THEN 1
+                        WHEN 'yellow' THEN 2
+                        WHEN 'missing' THEN 3
+                        WHEN 'green' THEN 4
+                        ELSE 5
+                    END,
+                    station
+                """
+            ).fetchall()
+        return [dict(row) for row in rows]
+
 
 class MonitorService:
     def __init__(self, config: Config, store: MonitorStore) -> None:
@@ -497,6 +517,134 @@ def parse_int(values: Dict[str, List[str]], key: str, default: int, minimum: int
     return max(minimum, min(maximum, value))
 
 
+SUMMARY_CSV_FIELDS = [
+    "Station",
+    "Status",
+    "Meaning",
+    "Age",
+    "Age Minutes",
+    "Latest Packet",
+    "Last Checked",
+    "Action",
+]
+
+HISTORY_CSV_FIELDS = [
+    "Checked At",
+    "Slot Start",
+    "Station",
+    "Status",
+    "Meaning",
+    "Latest Packet",
+    "Age",
+    "Age Minutes",
+    "Raw Lines",
+]
+
+
+def parse_iso_value(value: object) -> Optional[datetime]:
+    if value is None or value == "":
+        return None
+    try:
+        return datetime.fromisoformat(str(value))
+    except ValueError:
+        return None
+
+
+def format_report_time(value: object) -> str:
+    parsed = parse_iso_value(value)
+    if not parsed:
+        return "No data"
+    zone = parsed.tzname() or ""
+    suffix = f" {zone}" if zone else ""
+    return parsed.strftime("%Y-%m-%d %H:%M:%S") + suffix
+
+
+def format_age_text(value: object) -> str:
+    if value is None or value == "":
+        return "No data"
+    try:
+        minutes = max(0, int(round(float(value))))
+    except (TypeError, ValueError):
+        return "No data"
+    if minutes < 1:
+        return "< 1m"
+    days, remainder = divmod(minutes, 1440)
+    hours, mins = divmod(remainder, 60)
+    if days:
+        return f"{days}d {hours}h"
+    if hours:
+        return f"{hours}h {mins}m"
+    return f"{mins}m"
+
+
+def format_age_minutes(value: object) -> str:
+    if value is None or value == "":
+        return ""
+    try:
+        return str(max(0, int(round(float(value)))))
+    except (TypeError, ValueError):
+        return ""
+
+
+def status_meaning(status: object, config: Config) -> str:
+    status_text = str(status or "missing").lower()
+    if status_text == "green":
+        return f"OK - latest data is within {config.ok_lag_minutes:g} minutes"
+    if status_text == "yellow":
+        return f"WATCH - latest data is older than {config.ok_lag_minutes:g} minutes"
+    if status_text == "red":
+        return f"CHECK - latest data is older than {config.warn_lag_minutes:g} minutes or missing"
+    return "NO DATA - station has no recent poll record"
+
+
+def status_action(status: object) -> str:
+    status_text = str(status or "missing").lower()
+    if status_text == "green":
+        return "No action needed"
+    if status_text == "yellow":
+        return "Watch this station"
+    if status_text == "red":
+        return "Check station, network, or SeedLink stream"
+    return "Wait for first successful poll"
+
+
+def summary_report_row(row: dict, config: Config) -> dict:
+    status = str(row.get("last_status") or "missing").upper()
+    return {
+        "Station": row.get("station", ""),
+        "Status": status,
+        "Meaning": status_meaning(row.get("last_status"), config),
+        "Age": format_age_text(row.get("age_minutes")),
+        "Age Minutes": format_age_minutes(row.get("age_minutes")),
+        "Latest Packet": format_report_time(row.get("latest_packet_time")),
+        "Last Checked": format_report_time(row.get("last_seen")),
+        "Action": status_action(row.get("last_status")),
+    }
+
+
+def history_report_row(row: dict, config: Config) -> dict:
+    status = str(row.get("status") or "missing").upper()
+    return {
+        "Checked At": format_report_time(row.get("poll_time")),
+        "Slot Start": format_report_time(row.get("slot_start")),
+        "Station": row.get("station", ""),
+        "Status": status,
+        "Meaning": status_meaning(row.get("status"), config),
+        "Latest Packet": format_report_time(row.get("latest_packet_time")),
+        "Age": format_age_text(row.get("age_minutes")),
+        "Age Minutes": format_age_minutes(row.get("age_minutes")),
+        "Raw Lines": row.get("raw_line_count", ""),
+    }
+
+
+def make_csv_text(fieldnames: List[str], rows: List[dict]) -> str:
+    output = io.StringIO()
+    writer = csv.DictWriter(output, fieldnames=fieldnames, extrasaction="ignore")
+    writer.writeheader()
+    writer.writerows(rows)
+    return output.getvalue()
+
+
 class AppHandler(BaseHTTPRequestHandler):
     store: MonitorStore
     service: MonitorService
@@ -513,10 +661,18 @@ class AppHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
-    def send_text(self, text: str, content_type: str, status: HTTPStatus = HTTPStatus.OK) -> None:
+    def send_text(
+        self,
+        text: str,
+        content_type: str,
+        status: HTTPStatus = HTTPStatus.OK,
+        filename: str = "",
+    ) -> None:
         body = text.encode("utf-8")
         self.send_response(status)
         self.send_header("Content-Type", content_type)
+        if filename:
+            self.send_header("Content-Disposition", f'attachment; filename="{filename}"')
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)
@@ -546,14 +702,19 @@ class AppHandler(BaseHTTPRequestHandler):
             self.send_json(self.store.station_history(station, hours))
             return
         if path == "/api/export.csv":
+            rows = [summary_report_row(row, self.config) for row in self.store.export_summary_rows()]
+            self.send_text(make_csv_text(SUMMARY_CSV_FIELDS, rows), "text/csv; charset=utf-8", filename="slink_hz_summary.csv")
+            return
+        if path == "/api/export-history.csv":
+            hours = parse_int(params, "hours", 24, 1, 720)
+            rows = [history_report_row(row, self.config) for row in self.store.export_rows(hours)]
+            self.send_text(make_csv_text(HISTORY_CSV_FIELDS, rows), "text/csv; charset=utf-8", filename="slink_hz_history.csv")
+            return
+        if path == "/api/export-raw.csv":
             hours = parse_int(params, "hours", 24, 1, 720)
             rows = self.store.export_rows(hours)
-            output = []
             fieldnames = ["poll_time", "slot_start", "station", "status", "latest_packet_time", "age_minutes", "raw_line_count"]
-            output.append(",".join(fieldnames))
-            for row in rows:
-                output.append(",".join(csv_escape(row.get(field, "")) for field in fieldnames))
-            self.send_text("\n".join(output) + "\n", "text/csv; charset=utf-8")
+            self.send_text(make_csv_text(fieldnames, rows), "text/csv; charset=utf-8", filename="slink_hz_raw.csv")
             return
 
         self.serve_static(path)
@@ -587,13 +748,6 @@ class AppHandler(BaseHTTPRequestHandler):
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)
-
-
-def csv_escape(value: object) -> str:
-    text = "" if value is None else str(value)
-    if any(ch in text for ch in [",", '"', "\n", "\r"]):
-        return '"' + text.replace('"', '""') + '"'
-    return text
 
 
 def make_config(args: argparse.Namespace) -> Config:

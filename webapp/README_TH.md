@@ -69,9 +69,17 @@ GET  /api/status/latest
 GET  /api/status/slots?hours=8
 GET  /api/stations
 GET  /api/stations/<station>/history?hours=24
-GET  /api/export.csv?hours=24
+GET  /api/export.csv
+GET  /api/export-history.csv?hours=24
+GET  /api/export-raw.csv?hours=24
 POST /api/poll-now
 ```
+
+CSV files:
+
+- `/api/export.csv` = current station summary, one row per station, easiest to read in LibreOffice/Excel
+- `/api/export-history.csv?hours=24` = poll history for the selected time window
+- `/api/export-raw.csv?hours=24` = raw internal field names for debugging
 
 ## Systemd service example
 

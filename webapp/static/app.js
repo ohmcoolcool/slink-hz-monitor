@@ -78,7 +78,7 @@ function renderHeader(data) {
     alert.textContent = "";
   }
 
-  qs("#exportLink").href = `/api/export.csv?hours=${state.hours}`;
+  qs("#exportLink").href = "/api/export.csv";
 }
 
 function passesFilters(row) {
